@@ -83,12 +83,29 @@ _HTML_CONTENT = """
         .gray { background-color: #3a3a3c; border-color: #3a3a3c; }
         .empty { background-color: transparent; color: #d7dadc; }
         .current-input { border-color: #565758; }
+        
+        /* Estilos del Teclado Virtual Integrado */
+        #keyboard-container { width: 100%; max-width: 500px; padding: 10px; display: flex; flex-direction: column; gap: 6px; margin-top: 15px; }
+        .kbd-row { display: flex; justify-content: center; gap: 4px; width: 100%; }
+        .kbd-key-wrapper {
+            flex: 1; height: 55px; border-radius: 4px; border: none; background-color: #818384; color: white;
+            font-weight: bold; font-size: clamp(14px, 4vw, 18px); cursor: pointer; text-transform: uppercase;
+            display: flex; align-items: center; justify-content: center; user-select: none;
+            touch-action: manipulation;
+        }
+        .kbd-key-wrapper:active { background-color: #565758; }
+        .kbd-key-wrapper.wide { flex: 1.5; font-size: clamp(12px, 3.5vw, 16px); }
+        .kbd-key-wrapper.green { background-color: #538d4e; }
+        .kbd-key-wrapper.yellow { background-color: #b59f3b; }
+        .kbd-key-wrapper.gray { background-color: #3a3a3c; }
+        
         #hidden-input { opacity: 0; position: absolute; z-index: -1; pointer-events: none; }
         #board-container { cursor: text; padding: 10px; width: 100%; max-width: 400px; display: flex; flex-direction: column; align-items: center;}
     </style>
 </head>
 <body>
     <div id="board-container"></div>
+    <div id="keyboard-container"></div>
     <input type="text" id="hidden-input" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" />
     
     <script>
@@ -112,6 +129,13 @@ _HTML_CONTENT = """
         
         const inputEl = document.getElementById('hidden-input');
         const boardEl = document.getElementById('board-container');
+        const kbdEl = document.getElementById('keyboard-container');
+        
+        const kbLayout = [
+            ['Q','W','E','R','T','Y','U','I','O','P'],
+            ['A','S','D','F','G','H','J','K','L'],
+            ['ENTER','Z','X','C','V','B','N','M','DEL']
+        ];
         
         function evaluateGuess(guess, sec) {
             let res = Array(sec.length).fill('gray');
@@ -126,6 +150,57 @@ _HTML_CONTENT = """
                 }
             }
             return res;
+        }
+        
+        function renderKeyboard() {
+            let letterColors = {};
+            for (let g of guesses) {
+                let colors = evaluateGuess(g, secret);
+                for (let i = 0; i < secretLength; i++) {
+                    let char = g[i];
+                    let color = colors[i];
+                    if (color === 'green') letterColors[char] = 'green';
+                    else if (color === 'yellow' && letterColors[char] !== 'green') letterColors[char] = 'yellow';
+                    else if (color === 'gray' && !letterColors[char]) letterColors[char] = 'gray';
+                }
+            }
+
+            let html = '';
+            for (let row of kbLayout) {
+                html += '<div class="kbd-row">';
+                for (let key of row) {
+                    let kClass = '';
+                    if (key === 'ENTER' || key === 'DEL') kClass += ' wide';
+                    else if (letterColors[key]) kClass += ' ' + letterColors[key];
+                    
+                    html += `<div class="kbd-key-wrapper ${kClass}" data-key="${key}">${key === 'DEL' ? '⌫' : key}</div>`;
+                }
+                html += '</div>';
+            }
+            kbdEl.innerHTML = html;
+            
+            document.querySelectorAll('.kbd-key-wrapper').forEach(el => {
+                el.addEventListener('click', (e) => {
+                    if (status !== 'playing') return;
+                    let k = e.target.getAttribute('data-key');
+                    if (k === 'ENTER') {
+                        if(inputEl.value.length === secretLength) {
+                            const val = inputEl.value;
+                            inputEl.value = '';
+                            Streamlit.setComponentValue(val);
+                        }
+                    } else if (k === 'DEL') {
+                        inputEl.value = inputEl.value.slice(0, -1);
+                        renderBoard();
+                    } else {
+                        if (inputEl.value.length < secretLength) {
+                            inputEl.value += k;
+                            renderBoard();
+                        }
+                    }
+                });
+            });
+            Streamlit.setFrameHeight();
         }
         
         function renderBoard() {
@@ -173,6 +248,12 @@ _HTML_CONTENT = """
                 else { inputEl.blur(); }
                 
                 renderBoard();
+                if(status !== 'spectator') {
+                    kbdEl.style.display = "flex";
+                    renderKeyboard();
+                } else {
+                    kbdEl.style.display = "none";
+                }
             }
         });
 
