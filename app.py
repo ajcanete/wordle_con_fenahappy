@@ -22,8 +22,26 @@ st.markdown("""
 .gray { background-color: #3a3a3c; border-color: #3a3a3c; }
 .empty { background-color: transparent; color: #d7dadc; }
 .current-input { border-color: #565758; }
-div[data-testid="column"] { padding: 0 2px !important; }
-div[data-testid="column"] button { width: 100%; padding: 12px 0; font-size: clamp(12px, 3.5vw, 16px); font-weight: bold; margin-bottom: 4px; }
+
+/* Forzar que las columnas de Streamlit se mantengan horizontales en móviles */
+div[data-testid="stHorizontalBlock"] {
+    flex-direction: row !important;
+    flex-wrap: nowrap !important;
+    gap: 2px !important;
+}
+div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+    width: auto !important;
+    flex: 1 1 0% !important;
+    min-width: 0 !important;
+    padding: 0 !important;
+}
+div[data-testid="column"] button { 
+    width: 100%; 
+    padding: 12px 0; 
+    font-size: clamp(10px, 3vw, 16px); 
+    font-weight: bold; 
+    margin-bottom: 2px;
+}
 </style>
 """, unsafe_allow_html=True)
 
