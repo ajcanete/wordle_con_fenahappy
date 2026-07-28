@@ -69,7 +69,6 @@ _HTML_CONTENT = """
 <!DOCTYPE html>
 <html>
 <head>
-    <script src="https://cdn.jsdelivr.net/npm/streamlit-component-lib@1.3.0/dist/streamlit.js"></script>
     <style>
         body { margin: 0; padding: 0; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; background-color: transparent; }
         .wordle-row { display: flex; justify-content: center; gap: 6px; margin-bottom: 6px; width: 100%; }
@@ -93,6 +92,18 @@ _HTML_CONTENT = """
     <input type="text" id="hidden-input" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" />
     
     <script>
+        // --- Streamlit Iframe Protocol ---
+        function sendMessageToStreamlitClient(type, data) {
+            const outData = Object.assign({ isStreamlitMessage: true, type: type }, data);
+            window.parent.postMessage(outData, "*");
+        }
+        const Streamlit = {
+            setComponentReady: function() { sendMessageToStreamlitClient("streamlit:componentReady", {apiVersion: 1}); },
+            setFrameHeight: function() { sendMessageToStreamlitClient("streamlit:setFrameHeight", {height: document.body.scrollHeight}); },
+            setComponentValue: function(value) { sendMessageToStreamlitClient("streamlit:setComponentValue", {value: value}); }
+        };
+
+        // --- Game Logic ---
         let guesses = [];
         let secretLength = 5;
         let maxIntentos = 6;
@@ -147,27 +158,27 @@ _HTML_CONTENT = """
             Streamlit.setFrameHeight();
         }
         
-        function onRender(event) {
-            const data = event.detail.args;
-            guesses = data.guesses;
-            secretLength = data.secret.length;
-            secret = data.secret;
-            maxIntentos = data.max_intentos;
-            status = data.status;
-            
-            inputEl.maxLength = secretLength;
-            if(status === 'playing') {
-                // Keep input empty if we haven't typed since last render
-                inputEl.focus();
-            } else {
-                inputEl.blur();
+        // --- Streamlit Event Listener ---
+        window.addEventListener("message", function(event) {
+            if (event.data.type === "streamlit:render") {
+                const data = event.data.args;
+                guesses = data.guesses;
+                secretLength = data.secret.length;
+                secret = data.secret;
+                maxIntentos = data.max_intentos;
+                status = data.status;
+                
+                inputEl.maxLength = secretLength;
+                if(status === 'playing') { inputEl.focus(); } 
+                else { inputEl.blur(); }
+                
+                renderBoard();
             }
-            renderBoard();
-        }
+        });
 
-        Streamlit.events.addEventListener(Streamlit.RENDER_EVENT, onRender);
         Streamlit.setComponentReady();
         
+        // --- Interactions ---
         inputEl.addEventListener('input', () => {
             inputEl.value = inputEl.value.toUpperCase().replace(/[^A-ZÑ]/g, '');
             renderBoard();
