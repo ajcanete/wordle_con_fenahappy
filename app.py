@@ -23,11 +23,11 @@ st.markdown("""
 .empty { background-color: transparent; color: #d7dadc; }
 .current-input { border-color: #565758; }
 
-/* Forzar que las columnas de Streamlit se mantengan horizontales en móviles */
+/* Forzar que las columnas de Streamlit se mantengan horizontales en móviles y pegadas */
 div[data-testid="stHorizontalBlock"] {
     flex-direction: row !important;
     flex-wrap: nowrap !important;
-    gap: 2px !important;
+    gap: 4px !important; /* Espacio exacto entre botones */
 }
 div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
     width: auto !important;
@@ -35,12 +35,18 @@ div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
     min-width: 0 !important;
     padding: 0 !important;
 }
-div[data-testid="column"] button { 
-    width: 100%; 
-    padding: 12px 0; 
-    font-size: clamp(10px, 3vw, 16px); 
-    font-weight: bold; 
-    margin-bottom: 2px;
+/* Eliminar márgenes y gaps ocultos de los contenedores internos de Streamlit */
+div[data-testid="stHorizontalBlock"] div[data-testid="stVerticalBlock"] {
+    gap: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+}
+div[data-testid="stHorizontalBlock"] button { 
+    width: 100% !important; 
+    padding: 12px 0 !important; 
+    font-size: clamp(10px, 3vw, 15px) !important; 
+    font-weight: bold !important; 
+    margin: 0 !important;
 }
 </style>
 """, unsafe_allow_html=True)
