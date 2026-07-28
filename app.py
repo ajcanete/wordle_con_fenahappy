@@ -187,7 +187,7 @@ _HTML_CONTENT = """
                         if(inputEl.value.length === secretLength) {
                             const val = inputEl.value;
                             inputEl.value = '';
-                            Streamlit.setComponentValue(val);
+                            Streamlit.setComponentValue({ guess: val, timestamp: Date.now() });
                         }
                     } else if (k === 'DEL') {
                         inputEl.value = inputEl.value.slice(0, -1);
@@ -274,7 +274,7 @@ _HTML_CONTENT = """
                 if(inputEl.value.length === secretLength && status === 'playing') {
                     const val = inputEl.value;
                     inputEl.value = '';
-                    Streamlit.setComponentValue(val);
+                    Streamlit.setComponentValue({ guess: val, timestamp: Date.now() });
                 }
             }
         });
@@ -295,7 +295,7 @@ def view_single_player():
         
     st.info(f"💡 **Pista:** {st.session_state.hint}")
     
-    guess = wordle_interactive_grid(
+    guess_data = wordle_interactive_grid(
         guesses=st.session_state.guesses, 
         secret=st.session_state.secret_word, 
         max_intentos=st.session_state.max_intentos, 
@@ -303,14 +303,18 @@ def view_single_player():
         key="single_grid"
     )
     
-    if guess and st.session_state.game_status == "playing":
-        st.session_state.guesses.append(guess)
-        if guess == st.session_state.secret_word:
-            st.session_state.game_status = "won"
-            st.session_state.player_victories += 1
-        elif len(st.session_state.guesses) >= st.session_state.max_intentos:
-            st.session_state.game_status = "lost"
-        st.rerun()
+    if guess_data and isinstance(guess_data, dict) and st.session_state.game_status == "playing":
+        if 'last_ts' not in st.session_state: st.session_state.last_ts = 0
+        if guess_data.get('timestamp', 0) > st.session_state.last_ts:
+            st.session_state.last_ts = guess_data['timestamp']
+            guess = guess_data.get('guess', '')
+            st.session_state.guesses.append(guess)
+            if guess == st.session_state.secret_word:
+                st.session_state.game_status = "won"
+                st.session_state.player_victories += 1
+            elif len(st.session_state.guesses) >= st.session_state.max_intentos:
+                st.session_state.game_status = "lost"
+            st.rerun()
     
     if st.session_state.game_status == "won":
         st.success("🎉 ¡Felicidades! Has adivinado la palabra.")
@@ -467,7 +471,7 @@ def view_p2_join():
             
         st.info(f"💡 **Pista:** {st.session_state.hint}")
         
-        guess = wordle_interactive_grid(
+        guess_data = wordle_interactive_grid(
             guesses=st.session_state.guesses, 
             secret=st.session_state.secret_word, 
             max_intentos=st.session_state.max_intentos, 
@@ -475,23 +479,27 @@ def view_p2_join():
             key="p2_grid"
         )
         
-        if guess and st.session_state.game_status == "playing":
-            st.session_state.guesses.append(guess)
-            if guess == st.session_state.secret_word:
-                st.session_state.game_status = "won"
-                st.session_state.player_victories += 1
-            elif len(st.session_state.guesses) >= st.session_state.max_intentos:
-                st.session_state.game_status = "lost"
-            
-            try:
-                supabase.table('wordle_rooms').update({
-                    'intentos': st.session_state.guesses,
-                    'estado': st.session_state.game_status,
-                    'adivinador_victorias': st.session_state.player_victories
-                }).eq('codigo_sala', st.session_state.room_code).execute()
-            except Exception:
-                pass
-            st.rerun()
+        if guess_data and isinstance(guess_data, dict) and st.session_state.game_status == "playing":
+            if 'last_ts' not in st.session_state: st.session_state.last_ts = 0
+            if guess_data.get('timestamp', 0) > st.session_state.last_ts:
+                st.session_state.last_ts = guess_data['timestamp']
+                guess = guess_data.get('guess', '')
+                st.session_state.guesses.append(guess)
+                if guess == st.session_state.secret_word:
+                    st.session_state.game_status = "won"
+                    st.session_state.player_victories += 1
+                elif len(st.session_state.guesses) >= st.session_state.max_intentos:
+                    st.session_state.game_status = "lost"
+                
+                try:
+                    supabase.table('wordle_rooms').update({
+                        'intentos': st.session_state.guesses,
+                        'estado': st.session_state.game_status,
+                        'adivinador_victorias': st.session_state.player_victories
+                    }).eq('codigo_sala', st.session_state.room_code).execute()
+                except Exception:
+                    pass
+                st.rerun()
         
         if st.session_state.game_status == "won": st.success("🎉 ¡Felicidades! Has adivinado la palabra.")
         elif st.session_state.game_status == "lost": st.error(f"💀 Fin del juego. La palabra era: {st.session_state.secret_word}")
