@@ -7,49 +7,9 @@ from streamlit_autorefresh import st_autorefresh
 # --- CONFIGURACIÓN Y ESTILOS ---
 st.set_page_config(page_title="Wordle Multijugador", page_icon="🧩", layout="centered")
 
-st.markdown("""
-<style>
-.main .block-container { padding-top: 1rem; padding-bottom: 1rem; max-width: 500px; }
-.wordle-row { display: flex; justify-content: center; gap: 6px; margin-bottom: 6px; }
-.wordle-box {
-    width: 14vw; max-width: 55px; aspect-ratio: 1 / 1;
-    display: flex; align-items: center; justify-content: center;
-    font-size: clamp(20px, 6vw, 32px); font-weight: bold; color: white;
-    border: 2px solid #3a3a3c; border-radius: 4px; text-transform: uppercase;
-}
-.green { background-color: #538d4e; border-color: #538d4e; }
-.yellow { background-color: #b59f3b; border-color: #b59f3b; }
-.gray { background-color: #3a3a3c; border-color: #3a3a3c; }
-.empty { background-color: transparent; color: #d7dadc; }
-.current-input { border-color: #565758; }
-
-/* Forzar que las columnas de Streamlit se mantengan horizontales en móviles y pegadas */
-div[data-testid="stHorizontalBlock"] {
-    flex-direction: row !important;
-    flex-wrap: nowrap !important;
-    gap: 4px !important; /* Espacio exacto entre botones */
-}
-div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
-    width: auto !important;
-    flex: 1 1 0% !important;
-    min-width: 0 !important;
-    padding: 0 !important;
-}
-/* Eliminar márgenes y gaps ocultos de los contenedores internos de Streamlit */
-div[data-testid="stHorizontalBlock"] div[data-testid="stVerticalBlock"] {
-    gap: 0 !important;
-    padding: 0 !important;
-    margin: 0 !important;
-}
-div[data-testid="stHorizontalBlock"] button { 
-    width: 100% !important; 
-    padding: 12px 0 !important; 
-    font-size: clamp(10px, 3vw, 15px) !important; 
-    font-weight: bold !important; 
-    margin: 0 !important;
-}
-</style>
-""", unsafe_allow_html=True)
+import os
+import streamlit.components.v1 as components
+from datetime import datetime, timedelta
 
 # --- INICIALIZACIÓN DE SUPABASE ---
 @st.cache_resource
@@ -64,27 +24,22 @@ def init_supabase() -> Client | None:
 
 supabase = init_supabase()
 
-# --- LÓGICA DEL JUEGO ---
-
-def evaluate_guess(guess: str, secret: str) -> list[str]:
-    result = ['gray'] * len(guess)
-    secret_counts = {}
-    for char in secret: secret_counts[char] = secret_counts.get(char, 0) + 1
-    for i in range(len(guess)):
-        if guess[i] == secret[i]:
-            result[i] = 'green'
-            secret_counts[guess[i]] -= 1
-    for i in range(len(guess)):
-        if result[i] == 'gray' and guess[i] in secret_counts and secret_counts[guess[i]] > 0:
-            result[i] = 'yellow'
-            secret_counts[guess[i]] -= 1
-    return result
+# --- LIMPIEZA DE BBDD (LAZY GC) ---
+def clean_old_rooms():
+    if not supabase: return
+    try:
+        # Borrar salas con más de 2 horas de antigüedad
+        limite = (datetime.utcnow() - timedelta(hours=2)).isoformat()
+        supabase.table('wordle_rooms').delete().lt('created_at', limite).execute()
+    except Exception:
+        pass
 
 # --- GESTIÓN DE ESTADO ---
+import random
 def generar_nombre_bioquimico():
     adjetivos = ["Ansioso", "Estresado", "Oxidativo", "Agudo", "Crónico", "Inhibido", "Reactivo", "Metabólico", "Murino", "Fluorescente", "Tóxico", "Genético"]
     sustantivos = ["Cortisol", "Ratón", "Hipocampo", "Macrófago", "Glucocorticoide", "Receptor", "Citocina", "Enzima", "Anticuerpo", "Dopamina", "Placebo", "Genoma"]
-    return f"{random.choice(sustantivos)}{random.choice(adjetivos)}"
+    return f"{random.choice(sustantivos)} {random.choice(adjetivos)}"
 
 def init_local_state():
     if 'current_input' not in st.session_state: st.session_state.current_input = ""
@@ -105,72 +60,140 @@ def init_single_player(word="PYTHON", hint="Lenguaje de programación", max_inte
 
 init_local_state()
 
-# --- ACCIONES DEL TECLADO ---
-def handle_key(key: str):
-    if st.session_state.game_status != "playing": return
-    word_len = len(st.session_state.secret_word)
-    if len(st.session_state.current_input) < word_len:
-        st.session_state.current_input += key
-
-def handle_delete():
-    if st.session_state.game_status != "playing": return
-    if len(st.session_state.current_input) > 0:
-        st.session_state.current_input = st.session_state.current_input[:-1]
-
-def handle_enter():
-    if st.session_state.game_status != "playing": return
-    guess = st.session_state.current_input
-    word_len = len(st.session_state.secret_word)
-    if len(guess) == word_len:
-        st.session_state.guesses.append(guess)
-        if guess == st.session_state.secret_word:
-            st.session_state.game_status = "won"
-            st.session_state.player_victories += 1
-        elif len(st.session_state.guesses) >= st.session_state.max_intentos:
-            st.session_state.game_status = "lost"
-        st.session_state.current_input = ""
+# --- COMPONENTE JS PARA EL TABLERO ---
+_COMPONENT_DIR = os.path.join(os.path.dirname(__file__), "wordle_grid_component")
+if not os.path.exists(_COMPONENT_DIR):
+    os.makedirs(_COMPONENT_DIR)
+    
+_HTML_CONTENT = """
+<!DOCTYPE html>
+<html>
+<head>
+    <script src="https://cdn.jsdelivr.net/npm/streamlit-component-lib@1.3.0/dist/streamlit.js"></script>
+    <style>
+        body { margin: 0; padding: 0; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; background-color: transparent; }
+        .wordle-row { display: flex; justify-content: center; gap: 6px; margin-bottom: 6px; width: 100%; }
+        .wordle-box {
+            width: 14vw; max-width: 55px; aspect-ratio: 1 / 1;
+            display: flex; align-items: center; justify-content: center;
+            font-size: clamp(20px, 6vw, 32px); font-weight: bold; color: white;
+            border: 2px solid #3a3a3c; border-radius: 4px; text-transform: uppercase;
+        }
+        .green { background-color: #538d4e; border-color: #538d4e; }
+        .yellow { background-color: #b59f3b; border-color: #b59f3b; }
+        .gray { background-color: #3a3a3c; border-color: #3a3a3c; }
+        .empty { background-color: transparent; color: #d7dadc; }
+        .current-input { border-color: #565758; }
+        #hidden-input { opacity: 0; position: absolute; z-index: -1; pointer-events: none; }
+        #board-container { cursor: text; padding: 10px; width: 100%; max-width: 400px; display: flex; flex-direction: column; align-items: center;}
+    </style>
+</head>
+<body>
+    <div id="board-container"></div>
+    <input type="text" id="hidden-input" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" />
+    
+    <script>
+        let guesses = [];
+        let secretLength = 5;
+        let maxIntentos = 6;
+        let status = 'playing';
+        let secret = '';
         
-        if st.session_state.mode == "p2" and st.session_state.room_code and supabase:
-            try:
-                supabase.table('wordle_rooms').update({
-                    'intentos': st.session_state.guesses,
-                    'estado': st.session_state.game_status
-                }).eq('codigo_sala', st.session_state.room_code).execute()
-            except Exception:
-                pass
+        const inputEl = document.getElementById('hidden-input');
+        const boardEl = document.getElementById('board-container');
+        
+        function evaluateGuess(guess, sec) {
+            let res = Array(sec.length).fill('gray');
+            let secCounts = {};
+            for(let c of sec) { secCounts[c] = (secCounts[c] || 0) + 1; }
+            for(let i=0; i<guess.length; i++) {
+                if(guess[i] === sec[i]) { res[i] = 'green'; secCounts[guess[i]]--; }
+            }
+            for(let i=0; i<guess.length; i++) {
+                if(res[i] === 'gray' && secCounts[guess[i]] > 0) {
+                    res[i] = 'yellow'; secCounts[guess[i]]--;
+                }
+            }
+            return res;
+        }
+        
+        function renderBoard() {
+            let html = '';
+            let currentVal = inputEl.value.toUpperCase();
+            
+            for(let row = 0; row < maxIntentos; row++) {
+                let rowHtml = '<div class="wordle-row">';
+                if(row < guesses.length) {
+                    let g = guesses[row];
+                    let colors = evaluateGuess(g, secret);
+                    for(let i=0; i<secretLength; i++) {
+                        rowHtml += `<div class="wordle-box ${colors[i]}">${g[i]}</div>`;
+                    }
+                } else if(row === guesses.length && status === 'playing') {
+                    for(let i=0; i<secretLength; i++) {
+                        let char = currentVal[i] || '';
+                        let cClass = char ? 'current-input' : 'empty';
+                        rowHtml += `<div class="wordle-box ${cClass}">${char}</div>`;
+                    }
+                } else {
+                    for(let i=0; i<secretLength; i++) {
+                        rowHtml += `<div class="wordle-box empty"></div>`;
+                    }
+                }
+                rowHtml += '</div>';
+                html += rowHtml;
+            }
+            boardEl.innerHTML = html;
+            Streamlit.setFrameHeight();
+        }
+        
+        function onRender(event) {
+            const data = event.detail.args;
+            guesses = data.guesses;
+            secretLength = data.secret.length;
+            secret = data.secret;
+            maxIntentos = data.max_intentos;
+            status = data.status;
+            
+            inputEl.maxLength = secretLength;
+            if(status === 'playing') {
+                // Keep input empty if we haven't typed since last render
+                inputEl.focus();
+            } else {
+                inputEl.blur();
+            }
+            renderBoard();
+        }
 
+        Streamlit.events.addEventListener(Streamlit.RENDER_EVENT, onRender);
+        Streamlit.setComponentReady();
+        
+        inputEl.addEventListener('input', () => {
+            inputEl.value = inputEl.value.toUpperCase().replace(/[^A-ZÑ]/g, '');
+            renderBoard();
+        });
+        
+        boardEl.addEventListener('click', () => {
+            if(status === 'playing') inputEl.focus();
+        });
+        
+        inputEl.addEventListener('keydown', (e) => {
+            if(e.key === 'Enter') {
+                if(inputEl.value.length === secretLength && status === 'playing') {
+                    const val = inputEl.value;
+                    inputEl.value = '';
+                    Streamlit.setComponentValue(val);
+                }
+            }
+        });
+    </script>
+</body>
+</html>
+"""
+with open(os.path.join(_COMPONENT_DIR, "index.html"), "w", encoding="utf-8") as f:
+    f.write(_HTML_CONTENT)
 
-# --- COMPONENTES DE UI ---
-
-def render_grid(guesses, secret, current_input, status, max_intentos):
-    word_len = len(secret)
-    for row in range(max_intentos):
-        html_boxes = ""
-        if row < len(guesses):
-            guess = guesses[row]
-            colors = evaluate_guess(guess, secret)
-            for i in range(word_len): html_boxes += f'<div class="wordle-box {colors[i]}">{guess[i]}</div>'
-        elif row == len(guesses) and status == "playing":
-            for i in range(word_len):
-                char = current_input[i] if i < len(current_input) else ""
-                box_class = "current-input" if char else "empty"
-                html_boxes += f'<div class="wordle-box {box_class}">{char}</div>'
-        else:
-            for i in range(word_len): html_boxes += f'<div class="wordle-box empty"></div>'
-        st.markdown(f'<div class="wordle-row">{html_boxes}</div>', unsafe_allow_html=True)
-
-def render_keyboard():
-    disabled = st.session_state.get('game_status', 'playing') != 'playing'
-    row1, row2, row3 = list("QWERTYUIOP"), list("ASDFGHJKL"), ["ENTER"] + list("ZXCVBNM") + ["DEL"]
-    st.write("")
-    c1 = st.columns(len(row1))
-    for i, key in enumerate(row1): c1[i].button(key, key=f"k1_{key}", on_click=handle_key, args=(key,), disabled=disabled)
-    c2 = st.columns([0.5] + [1]*len(row2) + [0.5])
-    for i, key in enumerate(row2): c2[i+1].button(key, key=f"k2_{key}", on_click=handle_key, args=(key,), disabled=disabled)
-    c3 = st.columns([1.5] + [1]*(len(row3)-2) + [1.5])
-    c3[0].button("ENT", key="k_ENTER", on_click=handle_enter, disabled=disabled)
-    for i, key in enumerate(row3[1:-1]): c3[i+1].button(key, key=f"k3_{key}", on_click=handle_key, args=(key,), disabled=disabled)
-    c3[-1].button("DEL", key="k_DEL", on_click=handle_delete, disabled=disabled)
+wordle_interactive_grid = components.declare_component("wordle_interactive_grid", path=_COMPONENT_DIR)
 
 
 def view_single_player():
@@ -179,8 +202,23 @@ def view_single_player():
         init_single_player()
         
     st.info(f"💡 **Pista:** {st.session_state.hint}")
-    render_grid(st.session_state.guesses, st.session_state.secret_word, st.session_state.current_input, st.session_state.game_status, st.session_state.max_intentos)
-    render_keyboard()
+    
+    guess = wordle_interactive_grid(
+        guesses=st.session_state.guesses, 
+        secret=st.session_state.secret_word, 
+        max_intentos=st.session_state.max_intentos, 
+        status=st.session_state.game_status,
+        key="single_grid"
+    )
+    
+    if guess and st.session_state.game_status == "playing":
+        st.session_state.guesses.append(guess)
+        if guess == st.session_state.secret_word:
+            st.session_state.game_status = "won"
+            st.session_state.player_victories += 1
+        elif len(st.session_state.guesses) >= st.session_state.max_intentos:
+            st.session_state.game_status = "lost"
+        st.rerun()
     
     if st.session_state.game_status == "won":
         st.success("🎉 ¡Felicidades! Has adivinado la palabra.")
@@ -207,6 +245,7 @@ def view_p1_create():
                 else:
                     codigo = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
                     try:
+                        clean_old_rooms()
                         supabase.table('wordle_rooms').insert({
                             'codigo_sala': codigo, 'palabra_secreta': word, 'pista': hint,
                             'intentos': [], 'estado': 'playing', 'max_intentos': max_int,
@@ -245,7 +284,13 @@ def view_p1_create():
                         st.write("Esperando a que el otro jugador se una...")
                 
                 st.write(f"💡 **Pista:** {room_data['pista']}")
-                render_grid(room_data['intentos'], room_data['palabra_secreta'], "", status, room_data.get('max_intentos', 6))
+                wordle_interactive_grid(
+                    guesses=room_data['intentos'], 
+                    secret=room_data['palabra_secreta'], 
+                    max_intentos=room_data.get('max_intentos', 6), 
+                    status="spectator", 
+                    key="p1_grid_view"
+                )
                 
                 if status == "won": st.success(f"🎉 ¡{adv_nombre or 'El jugador'} ha adivinado la palabra!")
                 elif status == "lost": st.error(f"💀 No logró adivinar. La palabra era: {room_data['palabra_secreta']}")
@@ -329,8 +374,32 @@ def view_p2_join():
             st.write(f"Anfitrión: **{room_data['creador_nombre']}** (🏆 {room_data.get('creador_victorias', 0)})")
             
         st.info(f"💡 **Pista:** {st.session_state.hint}")
-        render_grid(st.session_state.guesses, st.session_state.secret_word, st.session_state.current_input, st.session_state.game_status, st.session_state.max_intentos)
-        render_keyboard()
+        
+        guess = wordle_interactive_grid(
+            guesses=st.session_state.guesses, 
+            secret=st.session_state.secret_word, 
+            max_intentos=st.session_state.max_intentos, 
+            status=st.session_state.game_status,
+            key="p2_grid"
+        )
+        
+        if guess and st.session_state.game_status == "playing":
+            st.session_state.guesses.append(guess)
+            if guess == st.session_state.secret_word:
+                st.session_state.game_status = "won"
+                st.session_state.player_victories += 1
+            elif len(st.session_state.guesses) >= st.session_state.max_intentos:
+                st.session_state.game_status = "lost"
+            
+            try:
+                supabase.table('wordle_rooms').update({
+                    'intentos': st.session_state.guesses,
+                    'estado': st.session_state.game_status,
+                    'adivinador_victorias': st.session_state.player_victories
+                }).eq('codigo_sala', st.session_state.room_code).execute()
+            except Exception:
+                pass
+            st.rerun()
         
         if st.session_state.game_status == "won": st.success("🎉 ¡Felicidades! Has adivinado la palabra.")
         elif st.session_state.game_status == "lost": st.error(f"💀 Fin del juego. La palabra era: {st.session_state.secret_word}")
